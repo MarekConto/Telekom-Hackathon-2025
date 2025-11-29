@@ -3,6 +3,7 @@ import CandidateInputForm from './CandidateInputForm';
 import BuildSelector from './BuildSelector';
 import RPGSkillTree from './RPGSkillTree';
 import BridgeQuestList from './BridgeQuestList';
+import DraggableCarousel from './DraggableCarousel';
 import { TrendingUp, Target, Award } from 'lucide-react';
 
 function CandidateView() {
@@ -155,8 +156,8 @@ function CandidateView() {
                             </div>
                         </div>
 
-                        {/* All Roles Grid */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+                        {/* All Roles Carousel */}
+                        <DraggableCarousel itemMinWidth={320} gap={16}>
                             {filteredBuilds.map((build) => {
                                 const percentage = Math.round(build.matchScore * 100);
                                 const isSelected = selectedBuild?.jobId === build.jobId;
@@ -177,7 +178,8 @@ function CandidateView() {
                                             transition: 'all 0.2s',
                                             border: isSelected ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
                                             background: isSelected ? 'rgba(226, 0, 116, 0.05)' : 'var(--color-surface)',
-                                            transform: isSelected ? 'scale(1.02)' : 'scale(1)'
+                                            transform: isSelected ? 'scale(1.02)' : 'scale(1)',
+                                            height: '100%',
                                         }}
                                         onMouseEnter={(e) => {
                                             if (!isSelected) {
@@ -232,17 +234,49 @@ function CandidateView() {
                                     </div>
                                 );
                             })}
-                        </div>
+                        </DraggableCarousel>
                     </section>
 
-                    {/* Future Role Builds - keep original selector for detailed view */}
+                    {/* Detailed Role Analysis */}
                     <section>
                         <h2 style={{ marginBottom: '16px' }}>Detailed Role Analysis</h2>
-                        <BuildSelector
-                            builds={builds}
-                            selectedBuild={selectedBuild}
-                            onSelect={setSelectedBuild}
-                        />
+                        <DraggableCarousel itemMinWidth={280} gap={16}>
+                            {builds.map(build => {
+                                const isSelected = selectedBuild?.jobId === build.jobId;
+                                return (
+                                    <div
+                                        key={build.jobId}
+                                        className="card"
+                                        onClick={() => setSelectedBuild(build)}
+                                        style={{
+                                            cursor: 'pointer',
+                                            border: isSelected ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
+                                            backgroundColor: isSelected ? '#FFF5F9' : 'var(--color-surface)',
+                                            transition: 'all 0.2s',
+                                            height: '100%',
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '12px' }}>
+                                            <h4 style={{ color: isSelected ? 'var(--color-primary)' : 'inherit' }}>{build.jobTitle}</h4>
+                                        </div>
+
+                                        <div style={{ display: 'flex', gap: '12px', fontSize: '14px' }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                <span className="text-muted">Match</span>
+                                                <span style={{ fontWeight: 600, color: build.matchScore > 0.7 ? '#10B981' : '#F59E0B' }}>
+                                                    {Math.round(build.matchScore * 100)}%
+                                                </span>
+                                            </div>
+                                            <div style={{ width: '1px', backgroundColor: 'var(--color-border)' }}></div>
+                                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                <span className="text-muted">Gap</span>
+                                                <span style={{ fontWeight: 600 }}>{build.gapCostHours}h</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </DraggableCarousel>
                     </section>
 
                     {selectedBuild && (
