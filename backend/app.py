@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flask_sqlalchemy import SQLAlchemy
 import json
 import os
 import uuid
@@ -14,72 +15,83 @@ CORS(app)
 # Secret key for JWT - in production, use environment variable
 app.config['SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
 
-# Data Storage (In-memory for now, can be persisted to JSON files)
-JOBS = []
-CANDIDATES = {}
-BUILDS = {}
-AVATARS = {}
-USERS = {}  # Store users: {email: {name, email, password_hash}}
-
+# Database Configuration
 DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
-def load_jobs():
-    global JOBS
-    jobs_path = os.path.join(DATA_DIR, 'jobs.json')
-    if os.path.exists(jobs_path):
-        with open(jobs_path, 'r') as f:
-            JOBS = json.load(f)
-    else:
-        # Default dummy jobs if file doesn't exist
-        JOBS = [
-            {
-                "jobId": "job_001",
-                "title": "Data Analyst",
-                "domain": "data_analytics",
-                "description": "Analyze data to help business make better decisions.",
-                "skillsRequired": [
-                    {"id": "skill_sql", "name": "SQL", "type": "technical", "importance": "critical"},
-                    {"id": "skill_python", "name": "Python", "type": "technical", "importance": "high"},
-                    {"id": "skill_viz", "name": "Data Visualization", "type": "technical", "importance": "medium"}
-                ]
-            },
-            {
-                "jobId": "job_002",
-                "title": "Product Owner",
-                "domain": "product",
-                "description": "Lead the product development lifecycle.",
-                "skillsRequired": [
-                    {"id": "skill_agile", "name": "Agile Methodologies", "type": "technical", "importance": "critical"},
-                    {"id": "skill_comm", "name": "Communication", "type": "soft", "importance": "critical"},
-                    {"id": "skill_stakeholder", "name": "Stakeholder Management", "type": "soft", "importance": "high"}
-                ]
-            }
-        ]
-        save_jobs()
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{os.path.join(DATA_DIR, "magenta.db")}'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-def save_jobs():
-    with open(os.path.join(DATA_DIR, 'jobs.json'), 'w') as f:
-        json.dump(JOBS, f, indent=2)
+db = SQLAlchemy(app)
 
-# Initialize data
-load_jobs()
+# --- Database Models ---
+
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    public_id = db.Column(db.String(50), unique=True)
+    name = db.Column(db.String(100), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(128), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationship to profile
+    profile = db.relationship('CandidateProfile', backref='user', uselist=False)
+
+class CandidateProfile(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), unique=True, nullable=True)
+    candidate_id = db.Column(db.String(50), unique=True, nullable=False) # UUID for frontend ref
+    rpg_class = db.Column(db.String(50))
+    creativity_score = db.Column(db.Float)
+    summary = db.Column(db.String(200))
+    skills_json = db.Column(db.Text) # Stored as JSON string
+    meta_skills_json = db.Column(db.Text) # Stored as JSON string
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class Job(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    job_id = db.Column(db.String(50), unique=True, nullable=False)
+    title = db.Column(db.String(100), nullable=False)
+    domain = db.Column(db.String(50))
+    description = db.Column(db.String(500))
+    
+    # Relationship
+    skills_required = db.relationship('JobSkill', backref='job', lazy=True, cascade="all, delete-orphan")
+
+class JobSkill(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    job_id = db.Column(db.Integer, db.ForeignKey('job.id'), nullable=False)
+    skill_id = db.Column(db.String(50), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    type = db.Column(db.String(50)) # technical, soft
+    importance = db.Column(db.String(20)) # critical, high, medium
+
+# Create tables
+with app.app_context():
+    db.create_all()
+
+# Data Storage (Persistent for Users/Candidates/Jobs)
+# AVATARS cache (could be moved to DB later, but keeping simple for now)
+AVATARS = {} 
+
+# Removed load_jobs and save_jobs as we now use DB
 
 # --- Authentication Helper Functions ---
 def hash_password(password):
     """Hash a password using bcrypt"""
     salt = bcrypt.gensalt()
-    return bcrypt.hashpw(password.encode('utf-8'), salt)
+    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
 def verify_password(password, hashed):
     """Verify a password against its hash"""
-    return bcrypt.checkpw(password.encode('utf-8'), hashed)
+    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
-def generate_token(email):
+def generate_token(public_id):
     """Generate a JWT token for a user"""
     payload = {
-        'email': email,
+        'public_id': public_id,
         'exp': datetime.utcnow() + timedelta(days=7)  # Token expires in 7 days
     }
     return jwt.encode(payload, app.config['SECRET_KEY'], algorithm='HS256')
@@ -99,14 +111,12 @@ def token_required(f):
                 token = token[7:]
             
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-            current_user = USERS.get(data['email'])
+            current_user = User.query.filter_by(public_id=data['public_id']).first()
             
             if not current_user:
                 return jsonify({'error': 'Invalid token'}), 401
                 
-        except jwt.ExpiredSignatureError:
-            return jsonify({'error': 'Token has expired'}), 401
-        except jwt.InvalidTokenError:
+        except Exception as e:
             return jsonify({'error': 'Invalid token'}), 401
             
         return f(current_user, *args, **kwargs)
@@ -124,39 +134,36 @@ def register():
     password = data.get('password', '')
     
     # Validation
-    if not name:
-        return jsonify({'error': 'Name is required'}), 400
-    if not email:
-        return jsonify({'error': 'Email is required'}), 400
-    if not password:
-        return jsonify({'error': 'Password is required'}), 400
+    if not name or not email or not password:
+        return jsonify({'error': 'All fields are required'}), 400
     if len(password) < 6:
         return jsonify({'error': 'Password must be at least 6 characters'}), 400
     
     # Check if user already exists
-    if email in USERS:
+    if User.query.filter_by(email=email).first():
         return jsonify({'error': 'User already exists with this email'}), 400
     
     # Create new user
-    password_hash = hash_password(password)
-    user = {
-        'name': name,
-        'email': email,
-        'password_hash': password_hash,
-        'created_at': datetime.utcnow().isoformat()
-    }
+    hashed_pw = hash_password(password)
+    new_user = User(
+        public_id=str(uuid.uuid4()),
+        name=name,
+        email=email,
+        password_hash=hashed_pw
+    )
     
-    USERS[email] = user
+    db.session.add(new_user)
+    db.session.commit()
     
     # Generate token
-    token = generate_token(email)
+    token = generate_token(new_user.public_id)
     
     # Return user data (without password hash)
     return jsonify({
         'token': token,
         'user': {
-            'name': user['name'],
-            'email': user['email']
+            'name': new_user.name,
+            'email': new_user.email
         }
     }), 201
 
@@ -173,23 +180,20 @@ def login():
         return jsonify({'error': 'Email and password are required'}), 400
     
     # Check if user exists
-    user = USERS.get(email)
-    if not user:
-        return jsonify({'error': 'Invalid email or password'}), 401
+    user = User.query.filter_by(email=email).first()
     
-    # Verify password
-    if not verify_password(password, user['password_hash']):
+    if not user or not verify_password(password, user.password_hash):
         return jsonify({'error': 'Invalid email or password'}), 401
     
     # Generate token
-    token = generate_token(email)
+    token = generate_token(user.public_id)
     
     # Return user data (without password hash)
     return jsonify({
         'token': token,
         'user': {
-            'name': user['name'],
-            'email': user['email']
+            'name': user.name,
+            'email': user.email
         }
     })
 
@@ -198,13 +202,31 @@ def login():
 def get_current_user(current_user):
     """Get current user information"""
     return jsonify({
-        'name': current_user['name'],
-        'email': current_user['email']
+        'name': current_user.name,
+        'email': current_user.email
     })
 
 @app.route('/api/jobs', methods=['GET'])
 def get_jobs():
-    return jsonify(JOBS)
+    jobs = Job.query.all()
+    result = []
+    for job in jobs:
+        skills = []
+        for s in job.skills_required:
+            skills.append({
+                "id": s.skill_id,
+                "name": s.name,
+                "type": s.type,
+                "importance": s.importance
+            })
+        result.append({
+            "jobId": job.job_id,
+            "title": job.title,
+            "domain": job.domain,
+            "description": job.description,
+            "skillsRequired": skills
+        })
+    return jsonify(result)
 
 # --- AI Service (OpenAI) ---
 from openai import OpenAI
@@ -364,7 +386,19 @@ class AIService:
             raise ValueError(f"Failed to analyze CV with AI: {str(e)}")
 
 @app.route('/api/candidate/parse', methods=['POST'])
+# @token_required # Ideally we require token, but for now we might handle anonymous uploads or check header manually
 def parse_candidate():
+    # Check for token manually to associate with user if logged in
+    current_user = None
+    token = request.headers.get('Authorization')
+    if token:
+        try:
+            if token.startswith('Bearer '): token = token[7:]
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+            current_user = User.query.filter_by(public_id=data['public_id']).first()
+        except:
+            pass # Proceed as anonymous if token invalid (or return error if we want strict auth)
+
     # Check if file is present
     cv_text = ""
     if 'file' in request.files:
@@ -375,33 +409,152 @@ def parse_candidate():
             except Exception as e:
                 return jsonify({"error": f"Failed to parse PDF: {str(e)}"}), 400
     else:
-        # Fallback to JSON body if no file
         data = request.form if request.form else request.json
         cv_text = data.get('cvText', '')
     
-    if not cv_text:
-        return jsonify({"error": "No CV text or file provided"}), 400
+    linkedin_url = request.form.get('linkedinUrl') if request.form else (request.json.get('linkedinUrl') if request.json else None)
+    
+    if not cv_text and not linkedin_url:
+        return jsonify({"error": "No CV text, file, or LinkedIn URL provided"}), 400
 
     try:
-        analysis = AIService.analyze_cv(cv_text)
+        # If we have a user, check if they already have a profile to update
+        # For now, we just re-analyze. In a real app, maybe we just update parts.
+        analysis = AIService.analyze_cv(cv_text) # Pass linkedin_url if implemented in AIService
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": f"Unexpected error during analysis: {str(e)}"}), 500
             
+    # Save/Update Profile in DB
     candidate_id = str(uuid.uuid4())
-    profile = {
+    
+    if current_user:
+        profile = CandidateProfile.query.filter_by(user_id=current_user.id).first()
+        if profile:
+            # Update existing
+            profile.rpg_class = analysis['rpgClass']
+            profile.creativity_score = analysis['creativityScore']
+            profile.skills_json = json.dumps(analysis['skills'])
+            profile.meta_skills_json = json.dumps(analysis['metaSkills'])
+            profile.summary = f"Level {len(analysis['skills'])} {analysis['rpgClass']}"
+            candidate_id = profile.candidate_id # Keep existing ID
+        else:
+            # Create new linked to user
+            profile = CandidateProfile(
+                user_id=current_user.id,
+                candidate_id=candidate_id,
+                rpg_class=analysis['rpgClass'],
+                creativity_score=analysis['creativityScore'],
+                skills_json=json.dumps(analysis['skills']),
+                meta_skills_json=json.dumps(analysis['metaSkills']),
+                summary=f"Level {len(analysis['skills'])} {analysis['rpgClass']}"
+            )
+            db.session.add(profile)
+    else:
+        # Anonymous - Create new unlinked profile
+        profile = CandidateProfile(
+            user_id=None,
+            candidate_id=candidate_id,
+            rpg_class=analysis['rpgClass'],
+            creativity_score=analysis['creativityScore'],
+            skills_json=json.dumps(analysis['skills']),
+            meta_skills_json=json.dumps(analysis['metaSkills']),
+            summary=f"Level {len(analysis['skills'])} {analysis['rpgClass']}"
+        )
+        db.session.add(profile)
+    
+    db.session.commit()
+    
+    # Return the profile structure expected by frontend
+    return jsonify({
         "candidateId": candidate_id,
         "summary": f"Level {len(analysis['skills'])} {analysis['rpgClass']}",
         "skills": analysis['skills'],
         "metaSkills": analysis['metaSkills'],
         "creativityScore": analysis['creativityScore'],
         "rpgClass": analysis['rpgClass']
-    }
-    
-    CANDIDATES[candidate_id] = profile
-    return jsonify(profile)
+    })
 
+
+def calculate_build(candidate_profile, job):
+    """Helper to calculate match score, skills, and quests for a candidate and job (SQLAlchemy object)"""
+    candidate_skills = candidate_profile.get('skills', [])
+    
+    # Create a mapping by both ID and name for flexible matching
+    candidate_skills_by_id = {s['id']: s for s in candidate_skills}
+    candidate_skills_by_name = {s['name'].lower(): s for s in candidate_skills}
+    
+    job_skills = job.skills_required # SQLAlchemy relationship
+    covered_skills = []
+    missing_skills = []
+    
+    match_count = 0
+    total_critical = 0
+    covered_critical = 0
+    
+    for req_skill in job_skills:
+        is_critical = req_skill.importance == 'critical'
+        if is_critical:
+            total_critical += 1
+        
+        # Try to match by ID first, then by name (case-insensitive)
+        matched_skill = None
+        if req_skill.skill_id in candidate_skills_by_id:
+            matched_skill = candidate_skills_by_id[req_skill.skill_id]
+        elif req_skill.name.lower() in candidate_skills_by_name:
+            matched_skill = candidate_skills_by_name[req_skill.name.lower()]
+        
+        if matched_skill:
+            match_count += 1
+            if is_critical:
+                covered_critical += 1
+            covered_skills.append({
+                "jobSkillId": req_skill.skill_id,
+                "name": req_skill.name,
+                "sourceSkillIds": [matched_skill['id']],
+                "explanation": f"Matched {req_skill.name} (Level: {matched_skill.get('level', 'N/A')})",
+                "category": matched_skill.get('category', 'Other')
+            })
+        else:
+            missing_skills.append({
+                "jobSkillId": req_skill.skill_id,
+                "name": req_skill.name,
+                "importance": req_skill.importance
+            })
+    
+    # Simple score calculation
+    total_skills = len(job_skills)
+    match_score = match_count / total_skills if total_skills > 0 else 0
+    
+    # Generate quests for missing skills
+    quests = []
+    gap_cost = 0
+    for missing in missing_skills:
+        hours = 10 if missing['importance'] == 'critical' else 5
+        gap_cost += hours
+        quests.append({
+            "id": f"quest_{missing['jobSkillId']}",
+            "title": f"Learn {missing['name']}",
+            "description": f"Complete a course or project to demonstrate {missing['name']}.",
+            "estimatedHours": hours
+        })
+        
+    return {
+        "jobId": job.job_id,
+        "jobTitle": job.title,
+        "matchScore": round(match_score, 2),
+        "gapCostHours": gap_cost,
+        "coveredSkills": covered_skills,
+        "missingSkills": missing_skills,
+        "quests": quests,
+        "skillCoverage": {
+            "criticalCovered": covered_critical,
+            "criticalTotal": total_critical,
+            "overallCovered": match_count,
+            "overallTotal": total_skills
+        }
+    }
 
 @app.route('/api/candidate/builds', methods=['POST'])
 def create_builds():
@@ -413,111 +566,39 @@ def create_builds():
         return jsonify({"error": "Missing candidate profile"}), 400
         
     candidate_id = candidate_profile.get('candidateId')
-    candidate_skills = candidate_profile.get('skills', [])
-    
-    # Create a mapping by both ID and name for flexible matching
-    candidate_skills_by_id = {s['id']: s for s in candidate_skills}
-    candidate_skills_by_name = {s['name'].lower(): s for s in candidate_skills}
     
     builds = []
     
-    for job in JOBS:
-        if job_ids and job['jobId'] not in job_ids:
+    # Fetch jobs from DB
+    all_jobs = Job.query.all()
+    
+    for job in all_jobs:
+        if job_ids and job.job_id not in job_ids:
             continue
             
-        job_skills = job.get('skillsRequired', [])
-        covered_skills = []
-        missing_skills = []
+        build_data = calculate_build(candidate_profile, job)
         
-        match_count = 0
-        total_critical = 0
-        covered_critical = 0
-        
-        for req_skill in job_skills:
-            is_critical = req_skill.get('importance') == 'critical'
-            if is_critical:
-                total_critical += 1
-            
-            # Try to match by ID first, then by name (case-insensitive)
-            matched_skill = None
-            if req_skill['id'] in candidate_skills_by_id:
-                matched_skill = candidate_skills_by_id[req_skill['id']]
-            elif req_skill['name'].lower() in candidate_skills_by_name:
-                matched_skill = candidate_skills_by_name[req_skill['name'].lower()]
-            
-            if matched_skill:
-                match_count += 1
-                if is_critical:
-                    covered_critical += 1
-                covered_skills.append({
-                    "jobSkillId": req_skill['id'],
-                    "name": req_skill['name'],
-                    "sourceSkillIds": [matched_skill['id']],
-                    "explanation": f"Matched {req_skill['name']} (Level: {matched_skill.get('level', 'N/A')})",
-                    "category": matched_skill.get('category', 'Other')
-                })
-            else:
-                missing_skills.append({
-                    "jobSkillId": req_skill['id'],
-                    "name": req_skill['name'],
-                    "importance": req_skill['importance']
-                })
-        
-        # Simple score calculation
-        total_skills = len(job_skills)
-        match_score = match_count / total_skills if total_skills > 0 else 0
-        
-        # Generate quests for missing skills
-        quests = []
-        gap_cost = 0
-        for missing in missing_skills:
-            hours = 10 if missing['importance'] == 'critical' else 5
-            gap_cost += hours
-            quests.append({
-                "id": f"quest_{missing['jobSkillId']}",
-                "title": f"Learn {missing['name']}",
-                "description": f"Complete a course or project to demonstrate {missing['name']}.",
-                "estimatedHours": hours
-            })
-            
-        build = {
-            "jobId": job['jobId'],
-            "jobTitle": job['title'],
-            "matchScore": round(match_score, 2),
-            "gapCostHours": gap_cost,
-            "coveredSkills": covered_skills,
-            "missingSkills": missing_skills,
-            "quests": quests
-        }
+        # Prepare build object for response (exclude internal stats if needed, but keeping for now)
+        build = {k: v for k, v in build_data.items() if k != 'skillCoverage'}
         builds.append(build)
         
-        # Create/Update Avatar for Recruiter View
-        # In a real app, this might be separate, but for hackathon we can do it here
-        if job['jobId'] not in AVATARS:
-            AVATARS[job['jobId']] = []
+        # Update AVATARS list (Recruiter View)
+        if job.job_id not in AVATARS:
+            AVATARS[job.job_id] = []
             
-        # Check if avatar already exists for this candidate/job combo
-        existing_avatar = next((a for a in AVATARS[job['jobId']] if a['candidateId'] == candidate_id), None)
+        # Remove existing avatar for this candidate if present
+        AVATARS[job.job_id] = [a for a in AVATARS[job.job_id] if a['candidateId'] != candidate_id]
         
         avatar = {
-            "avatarId": existing_avatar['avatarId'] if existing_avatar else str(uuid.uuid4()),
+            "avatarId": str(uuid.uuid4()), # New ID for the avatar view
             "candidateId": candidate_id,
-            "matchScore": round(match_score, 2),
-            "gapCostHours": gap_cost,
-            "summary": f"Match for {job['title']}",
-            "primaryBranch": "General", # Placeholder
-            "skillCoverage": {
-                "criticalCovered": covered_critical,
-                "criticalTotal": total_critical,
-                "overallCovered": match_count,
-                "overallTotal": total_skills
-            }
+            "matchScore": build_data['matchScore'],
+            "gapCostHours": build_data['gapCostHours'],
+            "summary": f"Match for {job.title}",
+            "primaryBranch": "General",
+            "skillCoverage": build_data['skillCoverage']
         }
-        
-        if existing_avatar:
-             AVATARS[job['jobId']] = [a for a in AVATARS[job['jobId']] if a['avatarId'] != avatar['avatarId']]
-             
-        AVATARS[job['jobId']].append(avatar)
+        AVATARS[job.job_id].append(avatar)
 
     response = {
         "candidateId": candidate_id,
@@ -525,11 +606,39 @@ def create_builds():
         "builds": builds
     }
     
-    BUILDS[candidate_id] = response
     return jsonify(response)
 
 @app.route('/api/recruiter/avatars/<jobId>', methods=['GET'])
 def get_avatars(jobId):
+    # Ensure AVATARS are populated from DB if empty
+    if jobId not in AVATARS or not AVATARS[jobId]:
+        AVATARS[jobId] = []
+        profiles = CandidateProfile.query.all()
+        job = Job.query.filter_by(job_id=jobId).first()
+        
+        if job:
+            for profile_record in profiles:
+                # Reconstruct profile
+                candidate_profile = {
+                    "candidateId": profile_record.candidate_id,
+                    "skills": json.loads(profile_record.skills_json),
+                    "rpgClass": profile_record.rpg_class
+                }
+                
+                # Calculate build
+                build_data = calculate_build(candidate_profile, job)
+                
+                avatar = {
+                    "avatarId": str(uuid.uuid4()),
+                    "candidateId": profile_record.candidate_id,
+                    "matchScore": build_data['matchScore'],
+                    "gapCostHours": build_data['gapCostHours'],
+                    "summary": f"Match for {job.title}",
+                    "primaryBranch": "General",
+                    "skillCoverage": build_data['skillCoverage']
+                }
+                AVATARS[jobId].append(avatar)
+
     return jsonify({"jobId": jobId, "avatars": AVATARS.get(jobId, [])})
 
 @app.route('/api/recruiter/avatar/<avatarId>', methods=['GET'])
@@ -550,37 +659,51 @@ def get_avatar_detail(avatarId):
     if not found_avatar:
         return jsonify({"error": "Avatar not found"}), 404
         
-    # Reconstruct the tree view (simplified for now)
-    # We need to get the build info again or store it better. 
-    # For now, let's re-calculate or retrieve from BUILDS if we have candidateId
-    
+    # Reconstruct the build data from DB
     candidate_id = found_avatar['candidateId']
-    candidate_builds = BUILDS.get(candidate_id, {}).get('builds', [])
-    target_build = next((b for b in candidate_builds if b['jobId'] == found_job_id), None)
+    profile_record = CandidateProfile.query.filter_by(candidate_id=candidate_id).first()
+    
+    if not profile_record:
+        return jsonify({"error": "Candidate profile not found"}), 404
+        
+    # Re-construct profile object
+    candidate_profile = {
+        "candidateId": profile_record.candidate_id,
+        "skills": json.loads(profile_record.skills_json),
+        "rpgClass": profile_record.rpg_class
+    }
+    
+    # Find the job
+    job = Job.query.filter_by(job_id=found_job_id).first()
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+        
+    # Calculate full build details
+    build_data = calculate_build(candidate_profile, job)
     
     nodes = []
     edges = []
     
-    if target_build:
-        for covered in target_build['coveredSkills']:
-             nodes.append({
-                 "id": covered['jobSkillId'],
-                 "name": covered['jobSkillId'], # Should map back to name
-                 "type": "technical", # Placeholder
-                 "status": "covered",
-                 "importance": "high", # Placeholder
-                 "evidence": [{"snippet": covered['explanation']}]
-             })
-             
-        for missing in target_build['missingSkills']:
+    # Build Tree Nodes
+    for covered in build_data['coveredSkills']:
             nodes.append({
-                "id": missing['jobSkillId'],
-                "name": missing['name'],
+                "id": covered['jobSkillId'],
+                "name": covered['name'], 
                 "type": "technical", # Placeholder
-                "status": "missing",
-                "importance": missing['importance'],
-                "evidence": []
+                "status": "covered",
+                "importance": "high", # Placeholder
+                "evidence": [{"snippet": covered['explanation']}]
             })
+            
+    for missing in build_data['missingSkills']:
+        nodes.append({
+            "id": missing['jobSkillId'],
+            "name": missing['name'],
+            "type": "technical", # Placeholder
+            "status": "missing",
+            "importance": missing['importance'],
+            "evidence": []
+        })
             
     return jsonify({
         "avatarId": avatarId,
@@ -589,7 +712,7 @@ def get_avatar_detail(avatarId):
             "nodes": nodes,
             "edges": edges
         },
-        "quests": target_build['quests'] if target_build else []
+        "quests": build_data['quests']
     })
 
 if __name__ == '__main__':
