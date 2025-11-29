@@ -16,3 +16,4 @@ dist/
 
 # Project specific
 backend/data/
+backend/logs/pdf_parse.log

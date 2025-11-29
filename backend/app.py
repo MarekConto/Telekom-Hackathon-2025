@@ -216,41 +216,100 @@ class AIService:
     @staticmethod
     def extract_text_from_pdf(file_storage):
         from pypdf import PdfReader
-        reader = PdfReader(file_storage)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() + "\n"
+        import logging
+        
+        # Setup logging
+        log_dir = os.path.join(os.path.dirname(__file__), 'logs')
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+        
+        logging.basicConfig(filename=os.path.join(log_dir, 'pdf_parse.log'), level=logging.INFO)
+        
+        try:
+            reader = PdfReader(file_storage)
+            text = ""
+            for i, page in enumerate(reader.pages):
+                try:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+                    else:
+                        logging.warning(f"Page {i} extraction returned None")
+                except Exception as e:
+                    logging.error(f"Failed to extract text from page {i}: {str(e)}")
+                    continue
+            
+            # Log the first 500 characters of the extracted text
+            logging.info(f"--- New PDF Parsed at {datetime.utcnow()} ---")
+            logging.info(f"Extracted Text Preview: {text[:]}...")
+            
+            return text
+        except Exception as e:
+            logging.error(f"Critical PDF parsing error: {str(e)}")
+            raise ValueError(f"Failed to parse PDF file: {str(e)}")
+
+    @staticmethod
+    def scrub_pii(text):
+        """Remove emails and phone numbers from text"""
+        import re
+        
+        # Email regex
+        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        text = re.sub(email_pattern, '[REDACTED_EMAIL]', text)
+        
+        # Phone regex (simple version for international/local formats)
+        # Matches patterns like +421 900 000 000, 0900 000 000, 0900-000-000
+        phone_pattern = r'\b(?:\+\d{1,3}[- ]?)?\(?\d{3}\)?[- ]?\d{3}[- ]?\d{3,4}\b'
+        text = re.sub(phone_pattern, '[REDACTED_PHONE]', text)
+        
         return text
 
     @staticmethod
-    def analyze_cv(text, linkedin_url=None):
+    def analyze_cv(text):
+        import logging
+        
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY not found. Please add your API key to backend/.env file")
+
+        # Scrub PII before sending to AI
+        scrubbed_text = AIService.scrub_pii(text)
+        
+        # Log scrubbed text usage
+        logging.info(f"Sending scrubbed text to AI (Length: {len(scrubbed_text)})")
 
         client = OpenAI(api_key=api_key)
         
         system_prompt = """
         You are an expert HR AI and Career Coach for the "MagentaShift" platform. 
-        Your goal is to analyze a candidate's CV (and optional LinkedIn profile) and extract a structured skill profile.
+        Your goal is to analyze a candidate's CV and extract a structured RPG-style skill profile.
         
         You must:
         1. Calculate a "Creativity Score" (0.0-1.0) based on the uniqueness of their background, presentation, and language used.
         2. Assign an "RPG Class" (e.g., "Code Wizard", "Data Alchemist", "Corporate Paladin", "Agile Bard", "Digital Strategist") based on their dominant skills.
         3. Identify "Meta Skills" (high-level traits like "Leadership", "Adaptability", "Strategic Thinking").
-        4. Extract specific skills with:
+        4. Extract a COMPREHENSIVE list of skills (aim for 20-30 skills) to populate a rich skill tree.
+        
+        For each skill, provide:
            - A unique ID (use format: skill_<lowercase_name_with_underscores>)
+           - Name: The display name of the skill (in English)
            - Type: "technical", "soft", "domain", or "tool"
-           - Category: "Code", "Data", "Social", "Business", or "Design"
+           - Category: EXACTLY ONE OF: "Code", "Data", "Social", "Business", "Design"
            - Level: "basic", "intermediate", or "advanced" based on evidence
            - Transferability Score (0.0-1.0): How applicable this skill is across different roles
            - Evidence: Direct snippets from the CV that demonstrate this skill
+           - Reasoning: A brief explanation (1 sentence) of why this skill was extracted and its relevance.
+           - YearsOfExperience: Estimated years of experience with this skill (e.g., "2 years", "5+ years", "Unknown").
+           - ConnectionToPreviousJobs: Mention which role/company this skill was primarily used in (e.g., "Used as Backend Dev at Google").
         
-        IMPORTANT: 
-        - Generate at least 8-15 skills for a comprehensive profile
-        - Be generous with transferability scores for soft skills (0.7-0.9)
-        - Technical skills should have moderate transferability (0.4-0.7)
-        - Domain-specific skills have lower transferability (0.2-0.5)
+        IMPORTANT RULES:
+        - Analyze CVs in ANY language (German, French, Spanish, Slovak, etc.) but ALWAYS output the skill names, reasoning, and descriptions in ENGLISH.
+        - Categories:
+            - "Code": Programming languages, frameworks, dev tools (e.g., Python, React, Git, AWS)
+            - "Data": SQL, Excel, Analytics, Visualization, Machine Learning (e.g., Tableau, Pandas)
+            - "Social": Communication, Leadership, Teamwork, Agile, Scrum
+            - "Business": Finance, Marketing, Strategy, Project Management, Sales
+            - "Design": UI/UX, Figma, Photoshop, Creative Writing
         
         Output strictly valid JSON with this exact schema:
         {
@@ -262,7 +321,10 @@ class AIService:
                     "category": "Code",
                     "level": "advanced",
                     "transferabilityScore": 0.65,
-                    "evidence": [{"snippet": "5 years of Python development experience"}]
+                    "evidence": [{"snippet": "5 years of Python development experience"}],
+                    "reasoning": "Candidate has extensive experience building backend systems with Python.",
+                    "yearsOfExperience": "5 years",
+                    "connectionToPreviousJobs": "Senior Developer at TechCorp"
                 }
             ],
             "creativityScore": 0.75,
@@ -271,9 +333,7 @@ class AIService:
         }
         """
         
-        user_content = f"CV Text:\n{text}\n"
-        if linkedin_url:
-            user_content += f"\nLinkedIn Profile URL: {linkedin_url}\n(Analyze the profile and infer additional skills typical for this professional background)"
+        user_content = f"CV Text:\n{scrubbed_text}\n"
 
         try:
             response = client.chat.completions.create(
@@ -286,7 +346,12 @@ class AIService:
                 temperature=0.7 # Allow some creativity in skill extraction
             )
             
-            result = json.loads(response.choices[0].message.content)
+            result_content = response.choices[0].message.content
+            
+            # Log the AI response
+            logging.info(f"AI Response: {result_content}")
+            
+            result = json.loads(result_content)
             
             # Validate that we have the required fields
             if not all(k in result for k in ["skills", "creativityScore", "rpgClass", "metaSkills"]):
@@ -294,6 +359,7 @@ class AIService:
             
             return result
         except Exception as e:
+            logging.error(f"OpenAI Error: {e}")
             print(f"OpenAI Error: {e}")
             raise ValueError(f"Failed to analyze CV with AI: {str(e)}")
 
@@ -313,14 +379,11 @@ def parse_candidate():
         data = request.form if request.form else request.json
         cv_text = data.get('cvText', '')
     
-    # Get LinkedIn URL
-    linkedin_url = request.form.get('linkedinUrl') if request.form else (request.json.get('linkedinUrl') if request.json else None)
-    
-    if not cv_text and not linkedin_url:
-        return jsonify({"error": "No CV text, file, or LinkedIn URL provided"}), 400
+    if not cv_text:
+        return jsonify({"error": "No CV text or file provided"}), 400
 
     try:
-        analysis = AIService.analyze_cv(cv_text, linkedin_url)
+        analysis = AIService.analyze_cv(cv_text)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
