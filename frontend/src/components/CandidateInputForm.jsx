@@ -40,7 +40,8 @@ function CandidateInputForm({ onParse, loading }) {
           </select>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
+        <div className="CVbox"
+          style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
           {/* PDF Upload Section */}
           <div>
             <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Upload CV (PDF)</label>

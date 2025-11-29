@@ -39,6 +39,10 @@ h6 {
     color: var(--color-text-main);
 }
 
+.CVbox {
+    margin-bottom: 25px;
+}
+
 button {
     cursor: pointer;
     font-family: inherit;
@@ -99,5 +103,92 @@ button {
 @keyframes spin {
     to {
         transform: rotate(360deg);
+    }
+}
+
+@keyframes fadeInOut {
+
+    0%,
+    100% {
+        opacity: 0.3;
+    }
+
+    50% {
+        opacity: 0.7;
+    }
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Draggable Carousel Styles */
+.draggable-carousel {
+    -webkit-overflow-scrolling: touch;
+}
+
+.draggable-carousel::-webkit-scrollbar {
+    display: none;
+}
+
+.draggable-carousel:active {
+    cursor: grabbing !important;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .container {
+        padding: 0 12px;
+    }
+
+    .card {
+        padding: 16px;
+    }
+
+    /* Hide desktop navigation, show mobile menu button */
+    .desktop-nav {
+        display: none !important;
+    }
+
+    .mobile-menu-btn {
+        display: block !important;
+    }
+
+    .mobile-menu {
+        display: block !important;
+    }
+
+    /* Adjust carousel dots for mobile */
+    .draggable-carousel+div+div {
+        margin-top: 12px;
+    }
+
+    .draggable-carousel+div+div button {
+        width: 8px !important;
+        height: 8px !important;
+    }
+
+    .draggable-carousel+div+div button[style*="32px"] {
+        width: 20px !important;
+    }
+}
+
+@media (max-width: 480px) {
+    .btn {
+        padding: 8px 16px;
+        font-size: 14px;
+    }
+
+    /* Further adjust carousel for small phones */
+    .draggable-carousel+div+div {
+        gap: 6px !important;
     }
 }
