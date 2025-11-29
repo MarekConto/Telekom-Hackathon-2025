@@ -4,19 +4,31 @@ import BridgeQuestList from './BridgeQuestList';
 
 function AvatarDetail({ avatarId }) {
     const [detail, setDetail] = useState(null);
+    const [error, setError] = useState(null);
 
     useEffect(() => {
         if (!avatarId) return;
+        setDetail(null);
+        setError(null);
 
         fetch(`http://localhost:5000/api/recruiter/avatar/${avatarId}`)
-            .then(res => res.json())
+            .then(res => {
+                if (!res.ok) throw new Error("Failed to load candidate details");
+                return res.json();
+            })
             .then(data => setDetail(data))
-            .catch(err => console.error("Failed to fetch avatar detail:", err));
+            .catch(err => {
+                console.error("Failed to fetch avatar detail:", err);
+                setError(err.message);
+            });
     }, [avatarId]);
 
+    if (error) return <div className="card" style={{ padding: '24px', color: 'red' }}>Error: {error}</div>;
     if (!detail) return <div className="card" style={{ padding: '24px' }}>Loading details...</div>;
 
     const { tree, quests } = detail;
+    if (!tree || !tree.nodes) return <div className="card" style={{ padding: '24px' }}>Invalid data received</div>;
+
     const covered = tree.nodes.filter(n => n.status === 'covered');
     const missing = tree.nodes.filter(n => n.status === 'missing');
 

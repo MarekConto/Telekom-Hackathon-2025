@@ -12,6 +12,24 @@ function DraggableCarousel({ children, itemMinWidth = 300, gap = 16 }) {
     const [lastX, setLastX] = useState(0);
     const [lastTime, setLastTime] = useState(0);
 
+    const [visibleCount, setVisibleCount] = useState(1);
+
+    useEffect(() => {
+        const updateVisibleCount = () => {
+            if (scrollContainerRef.current) {
+                const containerWidth = scrollContainerRef.current.clientWidth;
+                const itemWidth = itemMinWidth + gap;
+                // Calculate how many items are mostly visible
+                const count = Math.max(1, Math.round(containerWidth / itemWidth));
+                setVisibleCount(count);
+            }
+        };
+
+        updateVisibleCount();
+        window.addEventListener('resize', updateVisibleCount);
+        return () => window.removeEventListener('resize', updateVisibleCount);
+    }, [itemMinWidth, gap]);
+
     useEffect(() => {
         setTotalItems(React.Children.count(children));
     }, [children]);
@@ -114,7 +132,7 @@ function DraggableCarousel({ children, itemMinWidth = 300, gap = 16 }) {
             // Smooth whoosh animation
             const start = scrollContainerRef.current.scrollLeft;
             const distance = targetScroll - start;
-            const duration = 600; // ms
+            const duration = 50; // ms (was 600)
             let startTime = null;
 
             const easeInOutCubic = (t) => {
@@ -173,7 +191,7 @@ function DraggableCarousel({ children, itemMinWidth = 300, gap = 16 }) {
                     msOverflowStyle: 'none',
                     cursor: 'grab',
                     userSelect: 'none',
-                    padding: '8px 0',
+                    padding: '8px 4px', // Added horizontal padding to container
                     scrollBehavior: isDragging ? 'auto' : 'smooth',
                 }}
                 className="draggable-carousel"
@@ -269,6 +287,8 @@ function DraggableCarousel({ children, itemMinWidth = 300, gap = 16 }) {
                 </button>
             )}
 
+
+
             {/* Dot Indicators - Enhanced */}
             <div style={{
                 display: 'flex',
@@ -276,35 +296,46 @@ function DraggableCarousel({ children, itemMinWidth = 300, gap = 16 }) {
                 gap: '10px',
                 marginTop: '20px',
             }}>
-                {Array.from({ length: totalItems }).map((_, index) => (
-                    <button
-                        key={index}
-                        onClick={() => scrollToIndex(index)}
-                        style={{
-                            width: currentIndex === index ? '32px' : '10px',
-                            height: '10px',
-                            borderRadius: '5px',
-                            border: 'none',
-                            background: currentIndex === index
-                                ? 'linear-gradient(90deg, #E20074 0%, #C0005F 100%)'
-                                : 'rgba(226, 0, 116, 0.2)',
-                            cursor: 'pointer',
-                            transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
-                            boxShadow: currentIndex === index ? '0 2px 8px rgba(226, 0, 116, 0.3)' : 'none',
-                        }}
-                        onMouseEnter={(e) => {
-                            if (currentIndex !== index) {
-                                e.currentTarget.style.background = 'rgba(226, 0, 116, 0.4)';
-                            }
-                        }}
-                        onMouseLeave={(e) => {
-                            if (currentIndex !== index) {
-                                e.currentTarget.style.background = 'rgba(226, 0, 116, 0.2)';
-                            }
-                        }}
-                        aria-label={`Go to slide ${index + 1}`}
-                    />
-                ))}
+                {Array.from({ length: totalItems }).map((_, index) => {
+                    // Calculate visibility based on scroll position
+                    const isVisible = index >= currentIndex && index < currentIndex + visibleCount;
+
+                    // Special case for end of list: ensure last dots are lit if we're at the very end
+                    const isAtEnd = scrollContainerRef.current &&
+                        Math.ceil(scrollContainerRef.current.scrollLeft + scrollContainerRef.current.clientWidth) >= scrollContainerRef.current.scrollWidth;
+
+                    const effectiveIsVisible = isVisible || (isAtEnd && index >= totalItems - visibleCount);
+
+                    return (
+                        <button
+                            key={index}
+                            onClick={() => scrollToIndex(index)}
+                            style={{
+                                width: effectiveIsVisible ? '32px' : '10px',
+                                height: '10px',
+                                borderRadius: '5px',
+                                border: 'none',
+                                background: effectiveIsVisible
+                                    ? 'linear-gradient(90deg, #E20074 0%, #C0005F 100%)'
+                                    : 'rgba(226, 0, 116, 0.2)',
+                                cursor: 'pointer',
+                                transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+                                boxShadow: effectiveIsVisible ? '0 2px 8px rgba(226, 0, 116, 0.3)' : 'none',
+                            }}
+                            onMouseEnter={(e) => {
+                                if (!effectiveIsVisible) {
+                                    e.currentTarget.style.background = 'rgba(226, 0, 116, 0.4)';
+                                }
+                            }}
+                            onMouseLeave={(e) => {
+                                if (!effectiveIsVisible) {
+                                    e.currentTarget.style.background = 'rgba(226, 0, 116, 0.2)';
+                                }
+                            }}
+                            aria-label={`Go to slide ${index + 1}`}
+                        />
+                    );
+                })}
             </div>
 
             {/* Drag Hint with animation */}

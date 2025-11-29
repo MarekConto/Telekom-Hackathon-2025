@@ -9,7 +9,10 @@ function AvatarList({ jobId, selectedAvatarId, onSelect }) {
 
         fetch(`http://localhost:5000/api/recruiter/avatars/${jobId}`)
             .then(res => res.json())
-            .then(data => setAvatars(data.avatars || []))
+            .then(data => {
+                const sorted = (data.avatars || []).sort((a, b) => b.matchScore - a.matchScore);
+                setAvatars(sorted);
+            })
             .catch(err => console.error("Failed to fetch avatars:", err));
     }, [jobId]);
 
