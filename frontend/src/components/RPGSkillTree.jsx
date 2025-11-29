@@ -20,7 +20,18 @@ function RPGSkillTree({ baseSkills, build }) {
 
     // Merge all relevant skills
     const allSkills = [
-        ...build.coveredSkills.map(s => ({ ...s, status: 'covered', name: s.jobSkillId.replace('skill_', '') })),
+        ...build.coveredSkills.map(s => {
+            // Find original skill to get reasoning etc
+            const original = baseSkills.find(bs => bs.id === s.sourceSkillIds[0]);
+            return {
+                ...s,
+                status: 'covered',
+                name: s.jobSkillId.replace('skill_', ''),
+                reasoning: original?.reasoning,
+                yearsOfExperience: original?.yearsOfExperience,
+                connectionToPreviousJobs: original?.connectionToPreviousJobs
+            };
+        }),
         ...build.missingSkills.map(s => ({ ...s, status: 'missing' }))
     ];
 
@@ -74,6 +85,7 @@ function RPGSkillTree({ baseSkills, build }) {
                                         return (
                                             <div
                                                 key={idx}
+                                                className="group"
                                                 style={{
                                                     position: 'relative',
                                                     padding: '10px 16px',
@@ -83,7 +95,8 @@ function RPGSkillTree({ baseSkills, build }) {
                                                     minWidth: '120px',
                                                     textAlign: 'center',
                                                     opacity: isCovered ? 1 : 0.6,
-                                                    transition: 'all 0.3s'
+                                                    transition: 'all 0.3s',
+                                                    cursor: 'help'
                                                 }}
                                             >
                                                 <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '4px' }}>
@@ -93,6 +106,52 @@ function RPGSkillTree({ baseSkills, build }) {
                                                     {isCovered ? <Unlock size={10} /> : <Lock size={10} />}
                                                     {isCovered ? 'Mastered' : 'Locked'}
                                                 </div>
+
+                                                {/* Tooltip for details */}
+                                                {isCovered && (skill.reasoning || skill.yearsOfExperience) && (
+                                                    <div style={{
+                                                        position: 'absolute',
+                                                        bottom: '100%',
+                                                        left: '50%',
+                                                        transform: 'translateX(-50%)',
+                                                        marginBottom: '10px',
+                                                        width: '250px',
+                                                        background: '#0f0f1a',
+                                                        border: '1px solid rgba(255,255,255,0.2)',
+                                                        borderRadius: '8px',
+                                                        padding: '12px',
+                                                        zIndex: 10,
+                                                        display: 'none', // Hidden by default, shown on hover via CSS (simulated here)
+                                                        boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+                                                        textAlign: 'left'
+                                                    }} className="tooltip-content">
+                                                        {skill.yearsOfExperience && (
+                                                            <div style={{ fontSize: '12px', color: '#E20074', marginBottom: '4px', fontWeight: 'bold' }}>
+                                                                Experience: {skill.yearsOfExperience}
+                                                            </div>
+                                                        )}
+                                                        {skill.connectionToPreviousJobs && (
+                                                            <div style={{ fontSize: '11px', color: '#aaa', marginBottom: '8px', fontStyle: 'italic' }}>
+                                                                {skill.connectionToPreviousJobs}
+                                                            </div>
+                                                        )}
+                                                        {skill.reasoning && (
+                                                            <div style={{ fontSize: '12px', lineHeight: '1.4' }}>
+                                                                {skill.reasoning}
+                                                            </div>
+                                                        )}
+                                                        {/* Arrow */}
+                                                        <div style={{
+                                                            position: 'absolute',
+                                                            top: '100%',
+                                                            left: '50%',
+                                                            transform: 'translateX(-50%)',
+                                                            borderWidth: '6px',
+                                                            borderStyle: 'solid',
+                                                            borderColor: '#0f0f1a transparent transparent transparent'
+                                                        }} />
+                                                    </div>
+                                                )}
 
                                                 {/* Connector Line (Visual only) */}
                                                 {idx < skills.length - 1 && (
@@ -114,6 +173,11 @@ function RPGSkillTree({ baseSkills, build }) {
                     );
                 })}
             </div>
+            <style>{`
+                .group:hover .tooltip-content {
+                    display: block !important;
+                }
+            `}</style>
         </div>
     );
 }

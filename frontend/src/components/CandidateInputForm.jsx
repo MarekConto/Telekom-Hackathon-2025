@@ -1,14 +1,13 @@
 import React, { useState } from 'react';
-import { Upload, FileText, Linkedin } from 'lucide-react';
+import { Upload, FileText } from 'lucide-react';
 
 function CandidateInputForm({ onParse, loading }) {
   const [file, setFile] = useState(null);
-  const [linkedinUrl, setLinkedinUrl] = useState('');
   const [currentDomain, setCurrentDomain] = useState('finance');
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onParse(null, file, currentDomain, [], linkedinUrl);
+    onParse(null, file, currentDomain, []);
   };
 
   const handleFileChange = (e) => {
@@ -41,7 +40,7 @@ function CandidateInputForm({ onParse, loading }) {
           </select>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
           {/* PDF Upload Section */}
           <div>
             <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>Upload CV (PDF)</label>
@@ -82,49 +81,13 @@ function CandidateInputForm({ onParse, loading }) {
               </label>
             </div>
           </div>
-
-          {/* LinkedIn Input Section */}
-          <div>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>LinkedIn Profile</label>
-            <div style={{
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-md)',
-              padding: '20px',
-              height: '100%',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'center',
-              gap: '12px'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0077B5' }}>
-                <Linkedin size={24} />
-                <span style={{ fontWeight: 500 }}>Import from LinkedIn</span>
-              </div>
-              <input
-                type="url"
-                placeholder="https://linkedin.com/in/username"
-                value={linkedinUrl}
-                onChange={(e) => setLinkedinUrl(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '10px',
-                  borderRadius: 'var(--radius-sm)',
-                  border: '1px solid var(--color-border)',
-                  fontFamily: 'inherit'
-                }}
-              />
-              <span style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>
-                Paste your LinkedIn profile URL (optional)
-              </span>
-            </div>
-          </div>
         </div>
 
         <button
           type="submit"
           className="btn btn-primary"
-          disabled={loading || (!file && !linkedinUrl)}
-          style={{ opacity: loading || (!file && !linkedinUrl) ? 0.5 : 1 }}
+          disabled={loading || !file}
+          style={{ opacity: loading || !file ? 0.5 : 1 }}
         >
           {loading ? 'Analyzing...' : 'Parse CV'}
         </button>

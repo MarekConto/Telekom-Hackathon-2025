@@ -11,16 +11,15 @@ function CandidateView() {
     const [selectedBuild, setSelectedBuild] = useState(null);
     const [loading, setLoading] = useState(false);
 
-    const handleParse = async (cvText, file, currentDomain, targetDomains, linkedinUrl) => {
+    const handleParse = async (cvText, file, currentDomain, targetDomains) => {
         setLoading(true);
         try {
-            // 1. Parse CV (Handle File or LinkedIn)
+            // 1. Parse CV (Handle File)
             let profile;
             if (file) {
                 const formData = new FormData();
                 formData.append('file', file);
                 formData.append('currentDomain', currentDomain);
-                if (linkedinUrl) formData.append('linkedinUrl', linkedinUrl);
 
                 const parseRes = await fetch('http://localhost:5000/api/candidate/parse', {
                     method: 'POST',
@@ -31,7 +30,7 @@ function CandidateView() {
                 const parseRes = await fetch('http://localhost:5000/api/candidate/parse', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ cvText, currentDomain, targetDomains, linkedinUrl })
+                    body: JSON.stringify({ cvText, currentDomain, targetDomains })
                 });
                 profile = await parseRes.json();
             }
@@ -61,6 +60,15 @@ function CandidateView() {
             setLoading(false);
         }
     };
+
+    const [filter, setFilter] = useState('all'); // all, high_match, medium_match
+
+    // Filter builds
+    const filteredBuilds = builds.filter(build => {
+        if (filter === 'high_match') return build.matchScore >= 0.7;
+        if (filter === 'medium_match') return build.matchScore >= 0.4 && build.matchScore < 0.7;
+        return true;
+    });
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
@@ -95,9 +103,36 @@ function CandidateView() {
                 <>
                     {/* Role Fit Analysis Section */}
                     <section>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                            <TrendingUp size={24} color="var(--color-primary)" />
-                            <h2 style={{ margin: 0 }}>Role Fit Analysis</h2>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <TrendingUp size={24} color="var(--color-primary)" />
+                                <h2 style={{ margin: 0 }}>Role Fit Analysis</h2>
+                            </div>
+
+                            {/* Filter Controls */}
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button
+                                    className={`btn ${filter === 'all' ? 'btn-primary' : 'btn-outline'}`}
+                                    onClick={() => setFilter('all')}
+                                    style={{ padding: '6px 12px', fontSize: '12px' }}
+                                >
+                                    All Roles
+                                </button>
+                                <button
+                                    className={`btn ${filter === 'high_match' ? 'btn-primary' : 'btn-outline'}`}
+                                    onClick={() => setFilter('high_match')}
+                                    style={{ padding: '6px 12px', fontSize: '12px' }}
+                                >
+                                    High Match (70%+)
+                                </button>
+                                <button
+                                    className={`btn ${filter === 'medium_match' ? 'btn-primary' : 'btn-outline'}`}
+                                    onClick={() => setFilter('medium_match')}
+                                    style={{ padding: '6px 12px', fontSize: '12px' }}
+                                >
+                                    Medium Match
+                                </button>
+                            </div>
                         </div>
 
                         {/* Summary Stats */}
@@ -122,7 +157,7 @@ function CandidateView() {
 
                         {/* All Roles Grid */}
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                            {builds.map((build) => {
+                            {filteredBuilds.map((build) => {
                                 const percentage = Math.round(build.matchScore * 100);
                                 const isSelected = selectedBuild?.jobId === build.jobId;
 
