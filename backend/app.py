@@ -47,6 +47,14 @@ class CandidateProfile(db.Model):
     summary = db.Column(db.String(200))
     skills_json = db.Column(db.Text) # Stored as JSON string
     meta_skills_json = db.Column(db.Text) # Stored as JSON string
+    wants_domain_change = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class AssessmentSession(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    candidate_id = db.Column(db.String(50), nullable=False)
+    messages = db.Column(db.Text, default='[]') # JSON list of messages
+    status = db.Column(db.String(20), default='active') # active, completed
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -302,15 +310,27 @@ class AIService:
 
         client = OpenAI(api_key=api_key)
         
+        known_skills_str = "API Testing, AWS, Accounting Principles, Agile Methodologies, Analytical Thinking, Analytics, Attention to Detail, Azure, Business Analysis, CI/CD, CRM (Salesforce), Cloud Architecture, Communication, Conflict Resolution, Content Strategy, Creativity, Data Visualization, Deep Learning, Digital Marketing, Docker, Editing, Empathy, Employee Relations, Excel, Figma, Financial Modeling, Git, HR Systems, HTML/CSS, Incident Response, Interaction Design, JavaScript, Jira, Kubernetes, Leadership, Linux, Machine Learning, Microservices, Negotiation, Network Security, Node.js, Organizational Skills, Pandas, Penetration Testing, Persuasion, Prioritization, Problem Solving, Product Strategy, Project Management, Prototyping, PyTorch, Python, REST API Design, REST API Integration, React, Recruitment, Relationship Building, Requirements Gathering, Research, Responsive Design, SEO, SQL, Sales Techniques, Security, Selenium, Social Media Marketing, Stakeholder Management, Statistics, Swift, SwiftUI, Tableau, TensorFlow, Terraform, Test Automation, Time Management, Troubleshooting, TypeScript, UIKit, User Research, Visual Design, Wireshark, Writing, Xcode, iOS SDK"
+        
         system_prompt = """
         You are an expert HR AI and Career Coach for the "MagentaShift" platform. 
         Your goal is to analyze a candidate's CV and extract a structured RPG-style skill profile.
         
         You must:
-        1. Calculate a "Creativity Score" (0.0-1.0) based on the uniqueness of their background, presentation, and language used.
+        1. Calculate a "Creativity Score" (0.0-1.0) based on the uniqueness of their background, presentation, and language used. THIS IS MANDATORY.
         2. Assign an "RPG Class" (e.g., "Code Wizard", "Data Alchemist", "Corporate Paladin", "Agile Bard", "Digital Strategist") based on their dominant skills.
         3. Identify "Meta Skills" (high-level traits like "Leadership", "Adaptability", "Strategic Thinking").
-        4. Extract a COMPREHENSIVE list of skills (aim for 20-30 skills) to populate a rich skill tree.
+        4. Extract a COMPREHENSIVE list of skills (aim for 30-40 skills) to populate a rich skill tree.
+        
+        CRITICAL: PRIORITIZE MATCHING SKILLS FROM THIS MARKET LIST:
+        [{known_skills_str}]
+        
+        INSTRUCTIONS FOR SKILL EXTRACTION:
+        - If the candidate has a skill that is similar to one in this list, USE THE NAME FROM THE LIST.
+        - **INFER SKILLS**: If a candidate mentions "built a React app", you MUST infer and list "React", "JavaScript", "HTML", "CSS", and "Frontend Development" even if not explicitly listed.
+        - **BE AGGRESSIVE**: If they have "Senior Java Dev" role, assume they know "Java", "Spring Boot", "SQL", "Git", "CI/CD" unless proven otherwise.
+        - Be GENEROUS with matching. If they mention "managing projects", map it to "Project Management".
+        - Also extract other valid skills not in this list.
         
         For each skill, provide:
            - A unique ID (use format: skill_<lowercase_name_with_underscores>)
@@ -354,6 +374,9 @@ class AIService:
             "metaSkills": ["Problem Solving", "Team Collaboration"]
         }
         """
+        
+        # Format the prompt with the known skills
+        system_prompt = system_prompt.replace("{known_skills_str}", known_skills_str)
         
         user_content = f"CV Text:\n{scrubbed_text}\n"
 
@@ -413,6 +436,7 @@ def parse_candidate():
         cv_text = data.get('cvText', '')
     
     linkedin_url = request.form.get('linkedinUrl') if request.form else (request.json.get('linkedinUrl') if request.json else None)
+    wants_domain_change = request.form.get('wantsDomainChange') == 'true' if request.form else (request.json.get('wantsDomainChange', False) if request.json else False)
     
     if not cv_text and not linkedin_url:
         return jsonify({"error": "No CV text, file, or LinkedIn URL provided"}), 400
@@ -448,7 +472,8 @@ def parse_candidate():
                 creativity_score=analysis['creativityScore'],
                 skills_json=json.dumps(analysis['skills']),
                 meta_skills_json=json.dumps(analysis['metaSkills']),
-                summary=f"Level {len(analysis['skills'])} {analysis['rpgClass']}"
+                summary=f"Level {len(analysis['skills'])} {analysis['rpgClass']}",
+                wants_domain_change=wants_domain_change
             )
             db.session.add(profile)
     else:
@@ -460,7 +485,8 @@ def parse_candidate():
             creativity_score=analysis['creativityScore'],
             skills_json=json.dumps(analysis['skills']),
             meta_skills_json=json.dumps(analysis['metaSkills']),
-            summary=f"Level {len(analysis['skills'])} {analysis['rpgClass']}"
+            summary=f"Level {len(analysis['skills'])} {analysis['rpgClass']}",
+            wants_domain_change=wants_domain_change
         )
         db.session.add(profile)
     
@@ -572,33 +598,54 @@ def create_builds():
     # Fetch jobs from DB
     all_jobs = Job.query.all()
     
+    
     for job in all_jobs:
         if job_ids and job.job_id not in job_ids:
             continue
             
         build_data = calculate_build(candidate_profile, job)
-        
-        # Prepare build object for response (exclude internal stats if needed, but keeping for now)
+        builds.append(build_data)
+
+    # Rescale scores so the best match is 100% (or close to it)
+    if builds:
+        max_score = max(b['matchScore'] for b in builds)
+        if max_score > 0:
+            scaling_factor = 1.0 / max_score
+            for build in builds:
+                # Scale and cap at 1.0 (just in case)
+                new_score = min(build['matchScore'] * scaling_factor, 1.0)
+                build['matchScore'] = round(new_score, 2)
+        else:
+             # If all scores are 0, maybe set them to a small baseline or leave as 0
+             pass
+
+    # Now process for response and AVATARS
+    final_builds = []
+    for build_data in builds:
+        # Prepare build object for response
         build = {k: v for k, v in build_data.items() if k != 'skillCoverage'}
-        builds.append(build)
+        final_builds.append(build)
         
         # Update AVATARS list (Recruiter View)
-        if job.job_id not in AVATARS:
-            AVATARS[job.job_id] = []
+        job_id = build_data['jobId']
+        if job_id not in AVATARS:
+            AVATARS[job_id] = []
             
         # Remove existing avatar for this candidate if present
-        AVATARS[job.job_id] = [a for a in AVATARS[job.job_id] if a['candidateId'] != candidate_id]
+        AVATARS[job_id] = [a for a in AVATARS[job_id] if a['candidateId'] != candidate_id]
         
         avatar = {
             "avatarId": str(uuid.uuid4()), # New ID for the avatar view
             "candidateId": candidate_id,
             "matchScore": build_data['matchScore'],
             "gapCostHours": build_data['gapCostHours'],
-            "summary": f"Match for {job.title}",
+            "summary": f"Match for {build_data['jobTitle']}",
             "primaryBranch": "General",
             "skillCoverage": build_data['skillCoverage']
         }
-        AVATARS[job.job_id].append(avatar)
+        AVATARS[job_id].append(avatar)
+        
+    builds = final_builds
 
     response = {
         "candidateId": candidate_id,
@@ -714,6 +761,169 @@ def get_avatar_detail(avatarId):
         },
         "quests": build_data['quests']
     })
+
+    return jsonify({
+        "avatarId": avatarId,
+        "jobId": found_job_id,
+        "tree": {
+            "nodes": nodes,
+            "edges": edges
+        },
+        "quests": build_data['quests']
+    })
+
+# --- Assessment Chat Endpoints ---
+
+@app.route('/api/assessment/start', methods=['POST'])
+def start_assessment():
+    data = request.json
+    candidate_id = data.get('candidateId')
+    
+    if not candidate_id:
+        return jsonify({"error": "Candidate ID required"}), 400
+        
+    # Check if session exists
+    session = AssessmentSession.query.filter_by(candidate_id=candidate_id, status='active').first()
+    if not session:
+        session = AssessmentSession(candidate_id=candidate_id)
+        db.session.add(session)
+        db.session.commit()
+        
+    # Generate initial greeting/question
+    profile = CandidateProfile.query.filter_by(candidate_id=candidate_id).first()
+    if not profile:
+        return jsonify({"error": "Profile not found"}), 404
+        
+    skills = json.loads(profile.skills_json)
+    wants_change = profile.wants_domain_change
+    
+    initial_message = ""
+    if wants_change:
+        initial_message = "I see you're interested in exploring a new domain! That's exciting. To help me find the best path for you, could you tell me a bit about what fields or roles you're curious about? And which of your current skills do you enjoy using the most?"
+    else:
+        initial_message = f"Hello! I've analyzed your profile and see you have strong skills in {skills[0]['name'] if skills else 'your field'}. To fine-tune your career path, could you tell me what specific type of projects you enjoy working on the most?"
+
+    # Update session messages if empty
+    messages = json.loads(session.messages)
+    if not messages:
+        messages.append({"role": "assistant", "content": initial_message})
+        session.messages = json.dumps(messages)
+        db.session.commit()
+    
+    return jsonify({
+        "sessionId": session.id,
+        "messages": messages
+    })
+
+@app.route('/api/assessment/chat', methods=['POST'])
+def chat_assessment():
+    data = request.json
+    session_id = data.get('sessionId')
+    user_message = data.get('message')
+    
+    session = AssessmentSession.query.get(session_id)
+    if not session:
+        return jsonify({"error": "Session not found"}), 404
+        
+    messages = json.loads(session.messages)
+    messages.append({"role": "user", "content": user_message})
+    
+    # AI Logic
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    
+    # Check if we should complete (simple logic: after 3 user turns)
+    user_turns = sum(1 for m in messages if m['role'] == 'user')
+    
+    if user_turns >= 3:
+        # Finalize
+        session.status = 'completed'
+        
+        # Re-evaluation Prompt
+        profile = CandidateProfile.query.filter_by(candidate_id=session.candidate_id).first()
+        current_skills = profile.skills_json
+        
+        system_prompt = """
+        You are an expert Career Coach. Based on the candidate's original skills and this chat conversation, 
+        RE-EVALUATE their profile. 
+        
+        If they want to change domains, identify transferrable skills and new potential skills they might have mentioned.
+        If they are staying, refine the skill levels and add any missing specific skills.
+        
+        Output JSON with:
+        - "skills": [Updated list of skills]
+        - "rpgClass": [Updated Class]
+        - "creativityScore": [Updated Score]
+        - "summary": [Brief updated summary]
+        """
+        
+        chat_history = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
+        
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Original Skills: {current_skills}\n\nChat History:\n{chat_history}"}
+                ],
+                response_format={"type": "json_object"}
+            )
+            result = json.loads(response.choices[0].message.content)
+            
+            # Update Profile
+            profile.skills_json = json.dumps(result['skills'])
+            profile.rpg_class = result.get('rpgClass', profile.rpg_class)
+            profile.creativity_score = result.get('creativityScore', profile.creativity_score)
+            profile.summary = result.get('summary', profile.summary)
+            
+            final_message = "Thank you! I've updated your profile with these new insights. Let's see your career paths now."
+            messages.append({"role": "assistant", "content": final_message})
+            session.messages = json.dumps(messages)
+            db.session.commit()
+            
+            return jsonify({
+                "messages": messages,
+                "status": "completed",
+                "updatedProfile": {
+                    "candidateId": profile.candidate_id,
+                    "skills": result['skills'],
+                    "rpgClass": profile.rpg_class,
+                    "summary": profile.summary
+                }
+            })
+            
+        except Exception as e:
+            logging.error(f"AI Re-eval Error: {e}")
+            return jsonify({"error": "Failed to re-evaluate"}), 500
+
+    else:
+        # Continue Conversation
+        system_prompt = """
+        You are a friendly Career Coach. Your goal is to identify the candidate's specific strengths that would fit well with available roles in the market.
+        
+        Ask a follow-up question that:
+        1. Digs deeper into their specific skills and preferences.
+        2. Tries to uncover strengths relevant to potential next roles (e.g., leadership, specialized tech, creative problem solving).
+        3. Keeps the tone encouraging and professional.
+        
+        Keep your response short (under 2 sentences).
+        """
+        
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                *messages
+            ]
+        )
+        ai_reply = response.choices[0].message.content
+        messages.append({"role": "assistant", "content": ai_reply})
+        session.messages = json.dumps(messages)
+        db.session.commit()
+        
+        return jsonify({
+            "messages": messages,
+            "status": "active"
+        })
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

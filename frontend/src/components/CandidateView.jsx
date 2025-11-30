@@ -4,6 +4,7 @@ import BuildSelector from './BuildSelector';
 import RPGSkillTree from './RPGSkillTree';
 import BridgeQuestList from './BridgeQuestList';
 import DraggableCarousel from './DraggableCarousel';
+import AssessmentChat from './AssessmentChat';
 import { TrendingUp, Target, Award } from 'lucide-react';
 
 function CandidateView() {
@@ -12,8 +13,9 @@ function CandidateView() {
     const [selectedBuild, setSelectedBuild] = useState(null);
     const [loading, setLoading] = useState(false);
     const [filter, setFilter] = useState('all'); // all, high_match, medium_match
+    const [assessmentMode, setAssessmentMode] = useState(false);
 
-    const handleParse = async (cvText, file, currentDomain, targetDomains) => {
+    const handleParse = async (cvText, file, currentDomain, targetDomains, wantsDomainChange) => {
         setLoading(true);
         try {
             // 1. Parse CV (Handle File)
@@ -22,6 +24,7 @@ function CandidateView() {
                 const formData = new FormData();
                 formData.append('file', file);
                 formData.append('currentDomain', currentDomain);
+                formData.append('wantsDomainChange', wantsDomainChange);
 
                 const parseRes = await fetch('http://localhost:5000/api/candidate/parse', {
                     method: 'POST',
@@ -32,7 +35,7 @@ function CandidateView() {
                 const parseRes = await fetch('http://localhost:5000/api/candidate/parse', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ cvText, currentDomain, targetDomains })
+                    body: JSON.stringify({ cvText, currentDomain, targetDomains, wantsDomainChange })
                 });
                 profile = await parseRes.json();
             }
@@ -40,11 +43,28 @@ function CandidateView() {
             if (profile.error) throw new Error(profile.error);
             setCandidateData(profile);
 
-            // 2. Generate Builds
+            // Trigger Assessment Mode instead of immediate results
+            setAssessmentMode(true);
+
+        } catch (error) {
+            console.error("Error processing candidate:", error);
+            alert("Failed to process candidate: " + error.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleAssessmentComplete = async (updatedProfile) => {
+        setAssessmentMode(false);
+        setLoading(true);
+        setCandidateData(updatedProfile); // Update with refined data
+
+        try {
+            // 2. Generate Builds (Now with refined profile)
             const buildsRes = await fetch('http://localhost:5000/api/candidate/builds', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ candidateProfile: profile })
+                body: JSON.stringify({ candidateProfile: updatedProfile })
             });
             const buildsData = await buildsRes.json();
 
@@ -56,8 +76,7 @@ function CandidateView() {
                 setSelectedBuild(sortedBuilds[0]);
             }
         } catch (error) {
-            console.error("Error processing candidate:", error);
-            alert("Failed to process candidate: " + error.message);
+            console.error("Error generating builds:", error);
         } finally {
             setLoading(false);
         }
@@ -88,14 +107,22 @@ function CandidateView() {
     });
 
     const displayCandidate = candidateData || PLACEHOLDER_CANDIDATE;
-    const displayBuilds = candidateData ? filteredBuilds : PLACEHOLDER_BUILDS;
-    const isLocked = !candidateData;
+    const displayBuilds = (candidateData && !assessmentMode) ? filteredBuilds : PLACEHOLDER_BUILDS;
+    const isLocked = !candidateData || assessmentMode;
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
             <section>
                 <h2 style={{ marginBottom: '16px' }}>Candidate Profile</h2>
-                <CandidateInputForm onParse={handleParse} loading={loading} />
+
+                {assessmentMode ? (
+                    <AssessmentChat
+                        candidateId={candidateData.candidateId}
+                        onComplete={handleAssessmentComplete}
+                    />
+                ) : (
+                    <CandidateInputForm onParse={handleParse} loading={loading} />
+                )}
 
                 <div style={{
                     marginTop: '24px',
@@ -112,9 +139,18 @@ function CandidateView() {
                                 <p style={{ opacity: 0.9, fontSize: '14px' }}>Level {displayCandidate.skills.length} Character</p>
                             </div>
                             <div style={{ textAlign: 'right' }}>
-                                <div style={{ fontSize: '12px', textTransform: 'uppercase', opacity: 0.8 }}>Creativity Score</div>
+                                <div style={{ fontSize: '12px', textTransform: 'uppercase', opacity: 0.8 }}>Best Match</div>
                                 <div style={{ fontSize: '24px', fontWeight: 'bold' }}>
-                                    {Math.round((displayCandidate.creativityScore || 0) * 100)}/100
+                                    {builds.length > 0 ? (
+                                        <>
+                                            <span style={{ fontSize: '16px', marginRight: '8px', fontWeight: 'normal' }}>
+                                                {builds[0].jobTitle}
+                                            </span>
+                                            {Math.round(builds[0].matchScore * 100)}%
+                                        </>
+                                    ) : (
+                                        "N/A"
+                                    )}
                                 </div>
                             </div>
                         </div>

@@ -3,11 +3,12 @@ import { Upload, FileText } from 'lucide-react';
 
 function CandidateInputForm({ onParse, loading }) {
   const [file, setFile] = useState(null);
-  const [currentDomain, setCurrentDomain] = useState('finance');
+  const [currentDomain, setCurrentDomain] = useState('technology_engineering');
+  const [wantsDomainChange, setWantsDomainChange] = useState(false);
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onParse(null, file, currentDomain, []);
+    onParse(null, file, currentDomain, [], wantsDomainChange);
   };
 
   const handleFileChange = (e) => {
@@ -29,15 +30,28 @@ function CandidateInputForm({ onParse, loading }) {
               padding: '10px',
               borderRadius: 'var(--radius-md)',
               border: '1px solid var(--color-border)',
-              fontFamily: 'inherit'
+              fontFamily: 'inherit',
+              marginBottom: '12px'
             }}
           >
-            <option value="finance">Finance</option>
-            <option value="admin">Administration</option>
-            <option value="marketing">Marketing</option>
-            <option value="sales">Sales</option>
-            <option value="tech">Technology</option>
+            <option value="technology_engineering">Technology & Engineering</option>
+            <option value="business_finance_legal">Business, Finance & Legal</option>
+            <option value="sales_marketing_customer">Sales, Marketing & Customer Service</option>
+            <option value="education_arts_media">Education, Arts & Media</option>
           </select>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="checkbox"
+              id="domainChange"
+              checked={wantsDomainChange}
+              onChange={(e) => setWantsDomainChange(e.target.checked)}
+              style={{ width: '16px', height: '16px', accentColor: 'var(--color-primary)' }}
+            />
+            <label htmlFor="domainChange" style={{ fontSize: '14px', cursor: 'pointer' }}>
+              I want to change my career domain
+            </label>
+          </div>
         </div>
 
         <div className="CVbox"
