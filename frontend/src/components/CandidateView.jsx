@@ -124,45 +124,7 @@ function CandidateView() {
                     <CandidateInputForm onParse={handleParse} loading={loading} />
                 )}
 
-                <div style={{
-                    marginTop: '24px',
-                    opacity: isLocked ? 0.5 : 1,
-                    filter: isLocked ? 'grayscale(100%)' : 'none',
-                    transition: 'all 0.5s ease',
-                    pointerEvents: isLocked ? 'none' : 'auto',
-                    userSelect: isLocked ? 'none' : 'auto'
-                }}>
-                    <div className="card" style={{ background: 'linear-gradient(135deg, #2D1B69 0%, #E20074 100%)', color: 'white', border: 'none' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div>
-                                <h3 style={{ color: 'white', marginBottom: '4px' }}>{displayCandidate.rpgClass}</h3>
-                                <p style={{ opacity: 0.9, fontSize: '14px' }}>Level {displayCandidate.skills.length} Character</p>
-                            </div>
-                            <div style={{ textAlign: 'right' }}>
-                                <div style={{ fontSize: '12px', textTransform: 'uppercase', opacity: 0.8 }}>Best Match</div>
-                                <div style={{ fontSize: '24px', fontWeight: 'bold' }}>
-                                    {builds.length > 0 ? (
-                                        <>
-                                            <span style={{ fontSize: '16px', marginRight: '8px', fontWeight: 'normal' }}>
-                                                {builds[0].jobTitle}
-                                            </span>
-                                            {Math.round(builds[0].matchScore * 100)}%
-                                        </>
-                                    ) : (
-                                        "N/A"
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                        <div style={{ marginTop: '16px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                            {displayCandidate.metaSkills && displayCandidate.metaSkills.map((skill, i) => (
-                                <span key={i} style={{ padding: '4px 12px', borderRadius: '12px', background: 'rgba(255,255,255,0.2)', fontSize: '12px' }}>
-                                    {skill}
-                                </span>
-                            ))}
-                        </div>
-                    </div>
-                </div>
+
             </section>
 
             {/* LOCKED / UNLOCKED ROLE FIT SECTION */}
@@ -270,14 +232,18 @@ function CandidateView() {
                                 textAlign: 'center',
                                 background: 'linear-gradient(135deg, #10B981 0%, #E20074 100%)',
                                 color: 'white',
-                                border: 'none'
+                                border: 'none',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                justifyContent: 'center',
+                                alignItems: 'center'
                             }}>
-                                <div style={{ fontSize: '28px', fontWeight: 'bold' }}>
-                                    {candidateData
-                                        ? builds.filter(b => b.matchScore >= 0.7).length
-                                        : 0}
+                                <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '4px' }}>
+                                    {displayCandidate.rpgClass}
                                 </div>
-                                <div style={{ fontSize: '14px', opacity: 0.9 }}>Strong Fits</div>
+                                <div style={{ fontSize: '14px', opacity: 0.9 }}>
+                                    Level {displayCandidate.skills.length}
+                                </div>
                             </div>
                         </div>
 
